@@ -244,7 +244,15 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
 
         Returns
         -------
-        warpedStars : `list` [`afwImage.maskedImage.maskedImage.MaskedImage`]
+        result : `lsst.pipe.base.Struct`
+            Result struct with components:
+
+            - ``warpedStars``:
+                  `list` [`afwImage.maskedImage.maskedImage.MaskedImage`] of
+                  stamps of warped stars
+            - ``warpTransforms``: `list` [`afwGeom.TransformPoint2ToPoint2`] of
+                  the corresponding Transform from the initial star stamp to
+                  the common model grid
         """
         # warping control; only contains shiftingALg provided in config
         warpCont = afwMath.WarpingControl(self.config.warpingKernelName)
@@ -263,7 +271,7 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         nb90Rots = np.argmin(np.abs(possibleRots - float(yaw)))
 
         # apply transformation to each star
-        warpedStars = []
+        warpedStars, warpTransforms = [], []
         for star, cent in zip(stamps, pixCenters):
             # (re)create empty destination image
             destImage = afwImage.MaskedImageF(*self.modelStampSize)
@@ -296,10 +304,11 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
             if nb90Rots:
                 destImage = afwMath.rotateImageBy90(destImage, nb90Rots)
             warpedStars += [destImage.clone()]
-        return warpedStars
+            warpTransforms += [starWarper]
+        return pipeBase.Struct(warpedStars=warpedStars, warpTransforms=warpTransforms)
 
     def computeAnnularFlux(self, image):
-        """ Computes "AnnularFLux", the integrated flux within an annulus
+        """ Computes "AnnularFlux", the integrated flux within an annulus
         around an object's center. Since the center of bright stars are
         saturated and/or heavily affected by ghosts, we measure their flux
         in an annulus with a large enough inner radius to avoid the worst
@@ -368,7 +377,8 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         # Warp (and shift, and potentially rotate) them
         self.log.info("Applying warp to %i star stamps from exposure %s" % (len(extractedStamps.starIms),
                                                                             dataId))
-        warpedStars = self.warpStamps(extractedStamps.starIms, extractedStamps.pixCenters)
+        warpOutputs = self.warpStamps(extractedStamps.starIms, extractedStamps.pixCenters)
+        warpedStars = warpOutputs.warpedStars
         # Compute annularFlux and normalize
         self.log.info("Computing annular flux and normalizing %i bright stars from exposure %s" % (
             len(warpedStars), dataId))
@@ -380,7 +390,8 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         brightStarList = [bSS.BrightStarStamp(starStamp=warpedStars[j],
                                               gaiaGMag=extractedStamps.GMags[j],
                                               gaiaId=extractedStamps.gaiaIds[j],
-                                              annularFlux=fluxes[j])
+                                              annularFlux=fluxes[j],
+                                              transform=warpOutputs.warpTransforms[j])
                           for j in range(len(warpedStars))]
         brightStarStamps = bSS.BrightStarStamps(brightStarList, *self.config.annularFluxRadii)
         return pipeBase.Struct(brightStarStamps=brightStarStamps)
