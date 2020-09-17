@@ -253,6 +253,8 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
             - ``warpTransforms``: `list` [`afwGeom.TransformPoint2ToPoint2`] of
                   the corresponding Transform from the initial star stamp to
                   the common model grid
+           - ``nb90Rots``: `int`, the number of 90 degrees rotation required
+                  to compensate for detector orientation
         """
         # warping control; only contains shiftingALg provided in config
         warpCont = afwMath.WarpingControl(self.config.warpingKernelName)
@@ -300,12 +302,9 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
             if not goodPix:
                 self.log.debug("Warping of a star failed: no good pixel in output")
 
-            # Apply rotation if apropriate
-            if nb90Rots:
-                destImage = afwMath.rotateImageBy90(destImage, nb90Rots)
             warpedStars += [destImage.clone()]
             warpTransforms += [starWarper]
-        return pipeBase.Struct(warpedStars=warpedStars, warpTransforms=warpTransforms)
+        return pipeBase.Struct(warpedStars=warpedStars, warpTransforms=warpTransforms, nb90Rots=nb90Rots)
 
     def computeAnnularFlux(self, image):
         """ Computes "AnnularFlux", the integrated flux within an annulus
@@ -326,9 +325,11 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         """
         maskPlaneDict = image.getMask().getMaskPlaneDict()
         innerRadius, outerRadius = self.config.annularFluxRadii
+        bottomLeft = image.getXY0()
+        offset = bottomLeft[0] + self.modelCenter[0], bottomLeft[1] + self.modelCenter[1]
         # Create SpanSet of annulus
-        outerCircle = afwGeom.SpanSet.fromShape(outerRadius, afwGeom.Stencil.CIRCLE, offset=self.modelCenter)
-        innerCircle = afwGeom.SpanSet.fromShape(innerRadius, afwGeom.Stencil.CIRCLE, offset=self.modelCenter)
+        outerCircle = afwGeom.SpanSet.fromShape(outerRadius, afwGeom.Stencil.CIRCLE, offset=offset)
+        innerCircle = afwGeom.SpanSet.fromShape(innerRadius, afwGeom.Stencil.CIRCLE, offset=offset)
         annulus = outerCircle.intersectNot(innerCircle)
         # create image with the same pixel values within annulus, NO_DATA
         # elsewhere
