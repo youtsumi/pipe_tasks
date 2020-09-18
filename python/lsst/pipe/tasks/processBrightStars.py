@@ -333,7 +333,7 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
         annulus = outerCircle.intersectNot(innerCircle)
         # create image with the same pixel values within annulus, NO_DATA
         # elsewhere
-        annulusImage = afwImage.MaskedImageF(image.getDimensions(), planeDict=maskPlaneDict)
+        annulusImage = afwImage.MaskedImageF(bbox=image.getBBox(), planeDict=maskPlaneDict)
         annulusMask = annulusImage.getMask()
         annulusMask.array[:] = maskPlaneDict['NO_DATA']
         annulus.copyMaskedImage(image, annulusImage)
