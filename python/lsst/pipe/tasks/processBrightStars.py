@@ -253,7 +253,7 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
             - ``warpTransforms``: `list` [`afwGeom.TransformPoint2ToPoint2`] of
                   the corresponding Transform from the initial star stamp to
                   the common model grid
-           - ``nb90Rots``: `int`, the number of 90 degrees rotation required
+           - ``nb90Rots``: `int`, the number of 90 degrees rotations required
                   to compensate for detector orientation
         """
         # warping control; only contains shiftingALg provided in config
@@ -394,7 +394,8 @@ class ProcessBrightStarsTask(pipeBase.PipelineTask, pipeBase.CmdLineTask):
                                               annularFlux=fluxes[j],
                                               transform=warpOutputs.warpTransforms[j])
                           for j in range(len(warpedStars))]
-        brightStarStamps = bSS.BrightStarStamps(brightStarList, *self.config.annularFluxRadii)
+        brightStarStamps = bSS.BrightStarStamps(brightStarList, *self.config.annularFluxRadii,
+                                                nb90Rots=warpOutputs.nb90Rots)
         return pipeBase.Struct(brightStarStamps=brightStarStamps)
 
     def runDataRef(self, dataRef):
