@@ -512,6 +512,45 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
             else:
                 raise TypeError(f"Unknown sourceType {sourceType}")
 
+    def generateGSObjectsFromImages(self, image, fakeCat):
+        """Process catalog to generate `galsim.GSObject` s.
+
+        Parameters
+        ----------
+        image : `lsst.afw.image.exposure.exposure.ExposureF`
+            The image into which the fake sources should be added
+        fakeCat : `pandas.core.frame.DataFrame`
+            The catalog of fake sources to be input
+
+        Yields
+        ------
+        gsObjects : `generator`
+            A generator of tuples of `lsst.geom.SpherePoint` and `galsim.GSObject`.
+        """
+        band = image.getFilterLabel().bandLabel
+        wcs = image.getWcs()
+        photoCalib = image.getPhotoCalib()
+
+        self.log.info(f"Processing {len(fakeCat)} fake images")
+
+        for (index, row) in fakeCat.iterrows():
+            ra = row[self.config.raColName]
+            dec = row[self.config.decColName]
+            skyCoord = SpherePoint(ra, dec, radians)
+            xy = wcs.skyToPixel(skyCoord)
+
+            try:
+                flux = photoCalib.magnitudeToInstFlux(row[self.config.magVar % band], xy)
+            except LogicError:
+                continue
+
+            imFile = row[band+"imFilename"]
+            # Following implicitly sets image WCS from header
+            im = galsim.fits.read(imFile)
+            obj = galsim.InterpolatedImage(im)
+            obj = obj.withFlux(flux)
+            yield skyCoord, obj
+
     def processImagesForInsertion(self, fakeCat, wcs, psf, photoCalib, band, pixelScale):
         """Process images from files into the format needed for insertion.
 
