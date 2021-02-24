@@ -302,25 +302,6 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
 
     Add fake stars and galaxies to the given image, read in through the dataRef. Galaxy parameters are read in
     from the specified file and then modelled using galsim.
-
-    `InsertFakesTask` has five functions that make images of the fake sources and then add them to the
-    image.
-
-    `addPixCoords`
-        Use the WCS information to add the pixel coordinates of each source.
-    `mkFakeGalsimGalaxies`
-        Use Galsim to make fake double sersic galaxies for each set of galaxy parameters in the input file.
-    `mkFakeStars`
-        Use the PSF information from the image to make a fake star using the magnitude information from the
-        input file.
-    `cleanCat`
-        Remove rows of the input fake catalog which have half light radius, of either the bulge or the disk,
-        that are 0. Also removes rows that have Sersic index outside of galsim's allowed paramters. If
-        the config option sourceSelectionColName is set then this function limits the catalog of input fakes
-        to only those which are True in this column.
-    `addFakeSources`
-        Add the fake sources to the image.
-
     """
 
     _DefaultName = "insertFakes"
@@ -335,6 +316,7 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
             Data reference defining the image to have fakes added to it
             Used to access the following data products:
                 deepCoadd
+                deepCoadd_fakeSourceCat
         """
 
         infoStr = "Adding fakes to: tract: %d, patch: %s, filter: %s" % (dataRef.dataId["tract"],
