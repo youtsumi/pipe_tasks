@@ -27,14 +27,12 @@ from astropy.table import Table
 import numpy as np
 
 import lsst.geom as geom
-import lsst.afw.image as afwImage
-import lsst.afw.math as afwMath
 import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 
 from lsst.pipe.base import CmdLineTask, PipelineTask, PipelineTaskConfig, PipelineTaskConnections
 import lsst.pipe.base.connectionTypes as cT
-from lsst.pex.exceptions import LogicError, InvalidParameterError
+from lsst.pex.exceptions import LogicError
 from lsst.coadd.utils.coaddDataIdContainer import ExistingCoaddDataIdContainer
 from lsst.geom import SpherePoint, radians, Box2D
 
@@ -530,93 +528,6 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
             obj = obj.withFlux(flux)
             yield skyCoord, obj
 
-    def processImagesForInsertion(self, fakeCat, wcs, psf, photoCalib, band, pixelScale):
-        """Process images from files into the format needed for insertion.
-
-        Parameters
-        ----------
-        fakeCat : `pandas.core.frame.DataFrame`
-                    The catalog of fake sources to be input
-        wcs : `lsst.afw.geom.skyWcs.skyWcs.SkyWc`
-                    WCS to use to add fake sources
-        psf : `lsst.meas.algorithms.coaddPsf.coaddPsf.CoaddPsf` or
-              `lsst.meas.extensions.psfex.psfexPsf.PsfexPsf`
-                    The PSF information to use to make the PSF images
-        photoCalib : `lsst.afw.image.photoCalib.PhotoCalib`
-                    Photometric calibration to be used to calibrate the fake sources
-        band : `str`
-                    The filter band that the observation was taken in.
-        pixelScale : `float`
-                    The pixel scale of the image the sources are to be added to.
-
-        Returns
-        -------
-        galImages : `list`
-                    A list of tuples of `lsst.afw.image.exposure.exposure.ExposureF` and
-                    `lsst.geom.Point2D` of their locations.
-                    For sources labelled as galaxy.
-        starImages : `list`
-                    A list of tuples of `lsst.afw.image.exposure.exposure.ExposureF` and
-                    `lsst.geom.Point2D` of their locations.
-                    For sources labelled as star.
-
-        Notes
-        -----
-        The input fakes catalog needs to contain the absolute path to the image in the
-        band that is being used to add images to. It also needs to have the R.A. and
-        declination of the fake source in radians and the sourceType of the object.
-        """
-        galImages = []
-        starImages = []
-
-        self.log.info("Processing %d fake images" % len(fakeCat))
-
-        for (imFile, sourceType, mag, x, y) in zip(fakeCat[band + "imFilename"].array,
-                                                   fakeCat["sourceType"].array,
-                                                   fakeCat[self.config.magVar % band].array,
-                                                   fakeCat["x"].array, fakeCat["y"].array):
-
-            im = afwImage.ImageF.readFits(imFile)
-
-            xy = geom.Point2D(x, y)
-
-            # We put these two PSF calculations within this same try block so that we catch cases
-            # where the object's position is outside of the image.
-            try:
-                correctedFlux = psf.computeApertureFlux(self.config.calibFluxRadius, xy)
-                psfKernel = psf.computeKernelImage(xy).getArray()
-                psfKernel /= correctedFlux
-
-            except InvalidParameterError:
-                self.log.info("%s at %0.4f, %0.4f outside of image" % (sourceType, x, y))
-                continue
-
-            psfIm = galsim.InterpolatedImage(galsim.Image(psfKernel), scale=pixelScale)
-            galsimIm = galsim.InterpolatedImage(galsim.Image(im.array), scale=pixelScale)
-            convIm = galsim.Convolve([galsimIm, psfIm])
-
-            try:
-                outIm = convIm.drawImage(scale=pixelScale, method="real_space").array
-            except (galsim.errors.GalSimFFTSizeError, MemoryError):
-                continue
-
-            imSum = np.sum(outIm)
-            divIm = outIm/imSum
-
-            try:
-                flux = photoCalib.magnitudeToInstFlux(mag, xy)
-            except LogicError:
-                flux = 0
-
-            imWithFlux = flux*divIm
-
-            if sourceType == b"galaxy":
-                galImages.append((afwImage.ImageF(imWithFlux), xy))
-            if sourceType == b"star":
-                starImages.append((afwImage.ImageF(imWithFlux), xy))
-
-        return galImages, starImages
-
     def addPixCoords(self, fakeCat, image):
 
         """Add pixel coordinates to the catalog of fakes.
@@ -670,136 +581,6 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
 
         return fakeCat[isContained]
 
-    def mkFakeGalsimGalaxies(self, fakeCat, band, photoCalib, pixelScale, psf, image):
-        """Make images of fake galaxies using GalSim.
-
-        Parameters
-        ----------
-        band : `str`
-        pixelScale : `float`
-        psf : `lsst.meas.extensions.psfex.psfexPsf.PsfexPsf`
-                    The PSF information to use to make the PSF images
-        fakeCat : `pandas.core.frame.DataFrame`
-                    The catalog of fake sources to be input
-        photoCalib : `lsst.afw.image.photoCalib.PhotoCalib`
-                    Photometric calibration to be used to calibrate the fake sources
-
-        Yields
-        -------
-        galImages : `generator`
-                    A generator of tuples of `lsst.afw.image.exposure.exposure.ExposureF` and
-                    `lsst.geom.Point2D` of their locations.
-
-        Notes
-        -----
-
-        Fake galaxies are made by combining two sersic profiles, one for the bulge and one for the disk. Each
-        component has an individual sersic index (n), a, b and position angle (PA). The combined profile is
-        then convolved with the PSF at the specified x, y position on the image.
-
-        The names of the columns in the ``fakeCat`` are configurable and are the column names from the
-        University of Washington simulations database as default. For more information see the doc strings
-        attached to the config options.
-
-        See mkFakeStars doc string for an explanation of calibration to instrumental flux.
-        """
-
-        self.log.info("Making %d fake galaxy images" % len(fakeCat))
-
-        for (index, row) in fakeCat.iterrows():
-            xy = geom.Point2D(row["x"], row["y"])
-
-            # We put these two PSF calculations within this same try block so that we catch cases
-            # where the object's position is outside of the image.
-            try:
-                correctedFlux = psf.computeApertureFlux(self.config.calibFluxRadius, xy)
-                psfKernel = psf.computeKernelImage(xy).getArray()
-                psfKernel /= correctedFlux
-
-            except InvalidParameterError:
-                self.log.info("Galaxy at %0.4f, %0.4f outside of image" % (row["x"], row["y"]))
-                continue
-
-            try:
-                flux = photoCalib.magnitudeToInstFlux(row[self.config.magVar % band], xy)
-            except LogicError:
-                flux = 0
-
-            bulge = galsim.Sersic(row[self.config.nBulge], half_light_radius=row[self.config.bulgeHLR])
-            axisRatioBulge = row[self.config.bBulge]/row[self.config.aBulge]
-            bulge = bulge.shear(q=axisRatioBulge, beta=((90 - row[self.config.paBulge])*galsim.degrees))
-
-            disk = galsim.Sersic(row[self.config.nDisk], half_light_radius=row[self.config.diskHLR])
-            axisRatioDisk = row[self.config.bDisk]/row[self.config.aDisk]
-            disk = disk.shear(q=axisRatioDisk, beta=((90 - row[self.config.paDisk])*galsim.degrees))
-
-            gal = disk + bulge
-            gal = gal.withFlux(flux)
-
-            psfIm = galsim.InterpolatedImage(galsim.Image(psfKernel), scale=pixelScale)
-            gal = galsim.Convolve([gal, psfIm])
-            try:
-                galIm = gal.drawImage(scale=pixelScale, method="real_space").array
-            except (galsim.errors.GalSimFFTSizeError, MemoryError):
-                continue
-
-            yield (afwImage.ImageF(galIm), xy)
-
-    def mkFakeStars(self, fakeCat, band, photoCalib, psf, image):
-
-        """Make fake stars based off the properties in the fakeCat.
-
-        Parameters
-        ----------
-        band : `str`
-        psf : `lsst.meas.extensions.psfex.psfexPsf.PsfexPsf`
-                    The PSF information to use to make the PSF images
-        fakeCat : `pandas.core.frame.DataFrame`
-                    The catalog of fake sources to be input
-        image : `lsst.afw.image.exposure.exposure.ExposureF`
-                    The image into which the fake sources should be added
-        photoCalib : `lsst.afw.image.photoCalib.PhotoCalib`
-                    Photometric calibration to be used to calibrate the fake sources
-
-        Yields
-        -------
-        starImages : `generator`
-                    A generator of tuples of `lsst.afw.image.ImageF` of fake stars and
-                    `lsst.geom.Point2D` of their locations.
-
-        Notes
-        -----
-        To take a given magnitude and translate to the number of counts in the image
-        we use photoCalib.magnitudeToInstFlux, which returns the instrumental flux for the
-        given calibration radius used in the photometric calibration step.
-        Thus `calibFluxRadius` should be set to this same radius so that we can normalize
-        the PSF model to the correct instrumental flux within calibFluxRadius.
-        """
-
-        self.log.info("Making %d fake star images" % len(fakeCat))
-
-        for (index, row) in fakeCat.iterrows():
-            xy = geom.Point2D(row["x"], row["y"])
-
-            # We put these two PSF calculations within this same try block so that we catch cases
-            # where the object's position is outside of the image.
-            try:
-                correctedFlux = psf.computeApertureFlux(self.config.calibFluxRadius, xy)
-                starIm = psf.computeImage(xy)
-                starIm /= correctedFlux
-
-            except InvalidParameterError:
-                self.log.info("Star at %0.4f, %0.4f outside of image" % (row["x"], row["y"]))
-                continue
-
-            try:
-                flux = photoCalib.magnitudeToInstFlux(row[self.config.magVar % band], xy)
-            except LogicError:
-                flux = 0
-
-            starIm *= flux
-            yield ((starIm.convertF(), xy))
-
     def cleanCat(self, fakeCat, starCheckVal):
         """Remove rows from the fakes catalog which have HLR = 0 for either the buldge or disk component,
            also remove galaxies that have Sersic index outside the galsim min and max
@@ -850,53 +631,6 @@ class InsertFakesTask(PipelineTask, CmdLineTask):
             fakeCat = fakeCat[rowsSelected]
 
         return fakeCat
-
-    def addFakeSources(self, image, fakeImages, sourceType):
-        """Add the fake sources to the given image
-
-        Parameters
-        ----------
-        image : `lsst.afw.image.exposure.exposure.ExposureF`
-                    The image into which the fake sources should be added
-        fakeImages : `typing.Iterator` [`tuple` ['lsst.afw.image.ImageF`, `lsst.geom.Point2d`]]
-                    An iterator of tuples that contains (or generates) images of fake sources,
-                    and the locations they are to be inserted at.
-        sourceType : `str`
-                    The type (star/galaxy) of fake sources input
-
-        Returns
-        -------
-        image : `lsst.afw.image.exposure.exposure.ExposureF`
-
-        Notes
-        -----
-        Uses the x, y information in the ``fakeCat`` to position an image of the fake interpolated onto the
-        pixel grid of the image. Sets the ``FAKE`` mask plane for the pixels added with the fake source.
-        """
-
-        imageBBox = image.getBBox()
-        imageMI = image.maskedImage
-
-        for (fakeImage, xy) in fakeImages:
-            X0 = xy.getX() - fakeImage.getWidth()/2 + 0.5
-            Y0 = xy.getY() - fakeImage.getHeight()/2 + 0.5
-            self.log.debug("Adding fake source at %d, %d" % (xy.getX(), xy.getY()))
-            if sourceType == "galaxy":
-                interpFakeImage = afwMath.offsetImage(fakeImage, X0, Y0, "lanczos3")
-            else:
-                interpFakeImage = fakeImage
-
-            interpFakeImBBox = interpFakeImage.getBBox()
-            interpFakeImBBox.clip(imageBBox)
-
-            if interpFakeImBBox.getArea() > 0:
-                imageMIView = imageMI[interpFakeImBBox]
-                clippedFakeImage = interpFakeImage[interpFakeImBBox]
-                clippedFakeImageMI = afwImage.MaskedImageF(clippedFakeImage)
-                clippedFakeImageMI.mask.set(self.bitmask)
-                imageMIView += clippedFakeImageMI
-
-        return image
 
     def _getMetadataName(self):
         """Disable metadata writing"""
