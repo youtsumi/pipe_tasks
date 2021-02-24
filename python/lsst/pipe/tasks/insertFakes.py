@@ -41,8 +41,8 @@ from lsst.geom import SpherePoint, radians, Box2D
 __all__ = ["InsertFakesConfig", "InsertFakesTask"]
 
 
-def addFakeSources(image, objIterator, calibFluxRadius=12.0, logger=None):
-    """Add the fake sources to the given image
+def addFakeSources(image, objects, calibFluxRadius=12.0, logger=None):
+    """Add fake sources to the given image
 
     Parameters
     ----------
@@ -56,6 +56,8 @@ def addFakeSources(image, objIterator, calibFluxRadius=12.0, logger=None):
         image+catalog.  This is used to produce the correct instrumental fluxes
         within the radius.  The value should match that of the field defined in
         slot_CalibFlux_instFlux.
+    logger : `lsst.log.log.log.Log` or `logging.Logger`, optional
+        Logger.
     """
     image.mask.addMaskPlane("FAKE")
     bitmask = image.mask.getPlaneBitMask("FAKE")
@@ -69,7 +71,7 @@ def addFakeSources(image, objIterator, calibFluxRadius=12.0, logger=None):
     fullBounds = galsim.BoundsI(bbox.minX, bbox.maxX, bbox.minY, bbox.maxY)
     gsImg = galsim.Image(image.image.array, bounds=fullBounds)
 
-    for spt, gsObj in objIterator:
+    for spt, gsObj in objects:
         pt = wcs.skyToPixel(spt)
         posd = galsim.PositionD(pt.x, pt.y)
         posi = galsim.PositionI(pt.x//1, pt.y//1)
