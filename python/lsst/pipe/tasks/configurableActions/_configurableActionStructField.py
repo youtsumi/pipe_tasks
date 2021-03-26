@@ -189,7 +189,7 @@ T = TypeVar("T", bound="ConfigurableActionStructField")
 
 class ConfigurableActionStructField(Field):
     """`ConfigurableActionStructField` is a `~lsst.pex.config.Field` subclass
-    that allows `ConfigurableAction`\ s to be organized in a
+    that allows `ConfigurableAction` s to be organized in a
     `~lsst.pex.config.Config` class in a manor similar to how a
     `~lsst.pipe.base.Struct` works.
 
