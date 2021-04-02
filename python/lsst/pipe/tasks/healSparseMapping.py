@@ -28,10 +28,33 @@ import lsst.pex.config as pexConfig
 import lsst.pipe.base as pipeBase
 import lsst.geom
 import lsst.afw.geom as afwGeom
+from lsst.daf.butler import Formatter
 
 
-__all__ = ["HealSparseInputMapTask", "HealSparseInputMapConfig"]
+__all__ = ["HealSparseInputMapTask", "HealSparseInputMapConfig",
+           "HealSparseMapFormatter"]
 
+
+class HealSparseMapFormatter(Formatter):
+    """Interface for reading and writing healsparse.HealSparseMap files
+    """
+    unsupportedParameters = None
+    supportedExtenstions = frozenset({".hsp", ".fit", ".fits"})
+
+    def read(self, component=None):
+        if component is not None:
+            raise ValueError("Cannot read a component of a HealSparseMap")
+
+        path = self.fileDescriptor.location.path
+        try:
+            data = hsp.HealSparseMap.read(path)
+        except (OSError, RuntimeError):
+            raise ValueError(f"Unable to read healsparse map with URI {self.fileDescriptor.location.uri}")
+
+        return data
+
+    def write(self, inMemoryDataset):
+        inMemoryDataset.write(self.fileDescriptor.location.path)
 
 class HealSparseInputMapConfig(pexConfig.Config):
     """Configuration parameters for HealSparseInputMapTask"""
