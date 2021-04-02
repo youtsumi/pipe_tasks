@@ -5,7 +5,10 @@ tasks:
     config:
       makePsfMatched: true
       doWriteEmptyWarps: true
-  assembleCoadd: lsst.pipe.tasks.assembleCoadd.CompareWarpAssembleCoaddTask
+  assembleCoadd:
+    class: lsst.pipe.tasks.assembleCoadd.CompareWarpAssembleCoaddTask
+    config:
+      doInputMap: true
 subsets:
   coaddition:
     subset:
